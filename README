@@ -1,0 +1,298 @@
+
+Create a large number of files
+
+Compare the time and resources consumed by the following 2 methods
+
+  find ... -exec 
+  find ... | xargs
+
+Explore the command options of xargs
+
+find ... -exec (some linux command) is commonly used.
+Frequently this usages is used for cleanup of old tmp files and the like.
+This usage spawns a shell for each file found.
+
+For a large number of files this requires a lot of resources.
+
+For demonstration purposes I will be using the 'file' command rather than 'rm'.
+Using 'rm' would require rebuilding the test environment for each test, and doing so takes several minutes.
+
+used create.sh to create 200k files in 1000 or so directories.
+
+ time find . -type f -name file_\*  -exec file {} \; >/dev/null
+
+ real	3m8.725s
+ user	1m10.876s
+ sys	1m2.332s
+
+3 minutes - seems like a long time (it is)
+
+Try it with xargs
+(xargs is being used in 
+
+ time find . -type f -name file_\*  | xargs file >/dev/null
+
+ real	0m1.876s
+ user	0m1.036s
+ sys	0m0.852s
+
+
+Less than 2 seconds?  Really?  Yes, really.
+
+Could the xargs method have benefited from the caching effects of running the first find command?
+Could be - let's run find ... -exec again and see if it benefits from caching.
+
+ time find . -type f -name file_\*  -exec file {} \; >/dev/null
+
+ real	3m9.391s
+ user	1m9.540s
+ sys	1m2.752s
+
+Clearly any caching didn't help find ... -exec.
+
+============================================================
+
+the command 'find | xargs' was wrapped in a shell script to facilitate strace
+
+infer that 2000 arguments are processed per call to 'file'
+101 calls to execve - 1 call is for bash
+
+> strace -c -f ./find-xargs.sh
+Process 12049 attached
+Process 12050 attached
+Process 12048 suspended
+...
+Process 12048 resumed
+Process 12050 detached
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 95.21    0.958125       18425        52         1 wait4
+  2.58    0.025928         257       101        49 execve
+  0.73    0.007353           3      2224           getdents
+  0.63    0.006370           0    200000           lstat
+  0.50    0.004990           0    201112           newfstatat
+  0.30    0.003019           2      1858        48 read
+  0.05    0.000498           2       316       308 access
+  0.01    0.000063           1        51           clone
+  0.00    0.000021           0      3547           write
+  0.00    0.000004           0      1469           fstat
+  0.00    0.000000           0      2943       360 open
+  0.00    0.000000           0      2596         2 close
+  0.00    0.000000           0       275       158 stat
+  0.00    0.000000           0         4           lseek
+  0.00    0.000000           0       824           mmap
+  0.00    0.000000           0       263           mprotect
+  0.00    0.000000           0       153           munmap
+  0.00    0.000000           0       188           brk
+  0.00    0.000000           0        25           rt_sigaction
+  0.00    0.000000           0        43           rt_sigprocmask
+  0.00    0.000000           0         1           rt_sigreturn
+  0.00    0.000000           0        52        51 ioctl
+  0.00    0.000000           0         1           pipe
+  0.00    0.000000           0         4           dup2
+  0.00    0.000000           0         1           getpid
+  0.00    0.000000           0         2           uname
+  0.00    0.000000           0         4         1 fcntl
+  0.00    0.000000           0      2227           fchdir
+  0.00    0.000000           0         5           getrlimit
+  0.00    0.000000           0         9           getuid
+  0.00    0.000000           0         9           getgid
+  0.00    0.000000           0         9           geteuid
+  0.00    0.000000           0         9           getegid
+  0.00    0.000000           0         1           getppid
+  0.00    0.000000           0         1           getpgrp
+  0.00    0.000000           0        52           arch_prctl
+  0.00    0.000000           0         2         1 futex
+  0.00    0.000000           0         1           set_tid_address
+  0.00    0.000000           0         1           set_robust_list
+------ ----------- ----------- --------- --------- ----------------
+100.00    1.006371                420435       979 total
+
+Notice that for each file found, execve is called twice!
+
+strace -c -f -o find-exec-count.strace find . -type f -name file_\*  -exec file {} \; >/dev/null
+
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 97.97   68.630627         343    200000           wait4
+  0.60    0.416980           1    400001    200000 execve
+  0.31    0.218869           0   2602237   1400007 open
+  0.21    0.144227           1    200000           clone
+  0.18    0.129265           0   3200017           mmap
+  0.12    0.086480           0    600001           munmap
+  0.10    0.069640           0   1200006   1200006 access
+  0.10    0.067700           0   1000009           mprotect
+  0.08    0.058346           0   1000004    600003 stat
+  0.07    0.046201           0    600004           brk
+  0.06    0.044197           0   1000004           read
+  0.06    0.043040           0   1401116           fstat
+  0.05    0.032089           0   1202231           close
+  0.03    0.023865           0    200000           lstat
+  0.01    0.009082           0    202227           fchdir
+  0.01    0.009043           0    200001    200000 ioctl
+  0.01    0.007994           0    200000           write
+  0.01    0.007961           0    201112           newfstatat
+  0.00    0.002515           0    200001           arch_prctl
+  0.00    0.001118           1      2224           getdents
+  0.00    0.000000           0         3           rt_sigaction
+  0.00    0.000000           0         1           rt_sigprocmask
+  0.00    0.000000           0         1           uname
+  0.00    0.000000           0         1           fcntl
+  0.00    0.000000           0         2           getrlimit
+  0.00    0.000000           0         2         1 futex
+  0.00    0.000000           0         1           set_tid_address
+  0.00    0.000000           0         1           set_robust_list
+------ ----------- ----------- --------- --------- ----------------
+100.00   70.049239              15811207   3600017 total
+
+
+=======================================================================
+
+
+if we use this command line to control the number of filenames sent to 'file'...
+
+find . -type f -name file_\*  | xargs --max-args=2000 file >/dev/null
+
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 94.30    1.156627       11229       103         1 wait4
+  2.43    0.029763           0    200000           lstat
+  1.44    0.017671           0    201112           newfstatat
+  0.58    0.007137          11       622       614 access
+  0.33    0.004000           2      2162        97 read
+  0.33    0.004000           2      1826           fstat
+  0.33    0.003989          20       203       100 execve
+
+... we can see that 2000 looks to be the correct value for the default number of arguments sent by xargs to the called command
+There are two extra calls to execve, and I haven't yet tried to find out what those are for.
+
+Change the argument for --max-lines to 10000
+
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 95.54    0.004010        1337         3         1 wait4
+  4.46    0.000187           0      4443           newfstatat
+...
+  0.00    0.000000           0         3           execve
+
+Three calls to execve?  That doesn't seem quite right.
+
+ time ./find-xargs.sh
+ xargs: argument list too long
+
+ real	0m0.019s
+ user	0m0.008s
+ sys	0m0.012s
+
+
+No, it wasn't right, as that argument list caused an error condition.
+===========================================================================
+
+provide a larger buffer and xargs will work
+find . -type f -name file_\*  | xargs --max-chars=1048576 --max-lines=10000 file >/dev/null
+
+
+===========================================================================
+
+
+-max-args=1000
+> time strace -c -f ./maxargs.sh 2>&1 |grep -E '%|exec'
+% time     seconds  usecs/call     calls    errors syscall
+  0.00    0.000000           0        23        10 execve
+
+real	0m0.671s
+user	0m0.252s
+sys	0m0.432s
+
+--max-lines=1000 
+> time strace -c -f ./maxlines.sh 2>&1 |grep -E '%|exec'
+% time     seconds  usecs/call     calls    errors syscall
+  0.00    0.000000           0        23        10 execve
+
+real	0m0.663s
+user	0m0.272s
+sys	0m0.400s
+
+
+=============================================================================
+
+maximum arguments allowed
+
+ getconf ARG_MAX
+ 2097152
+
+
+This may be incorrect depending on kernel version:
+  http://www.in-ulm.de/~mascheck/various/argmax/
+
+
+ xargs --show-limits
+ Your environment variables take up 6586 bytes
+ POSIX upper limit on argument length (this system): 2088518
+ POSIX smallest allowable upper limit on argument length (all systems): 4096
+ Maximum length of command we could actually use: 2081932
+ Size of command buffer we are actually using: 131072
+
+The default buffer here is 128k.
+We can increase that with the --max-chars argument
+
+ xargs --max-chars=262144 --show-limits
+ Your environment variables take up 6586 bytes
+ POSIX upper limit on argument length (this system): 2088518
+ POSIX smallest allowable upper limit on argument length (all systems): 4096
+ Maximum length of command we could actually use: 2081932
+ Size of command buffer we are actually using: 262144
+
+
+=================================================================================
+
+--max-lines and --max-args do the same thing.
+Using -max-args as it can be used with the -s/--max-chars option 
+
+Using the script find-xargs.sh you can see that max-args directly controls the number of times the program called by xargs is executed.
+
+  find-xargs.sh <max-find-files> <max-args>
+
+#################################
+#!/bin/bash
+
+# find-xargs.sh
+
+# default to 100 if not set on command line
+: ${MAX_FILES:=$1}
+: ${MAX_FILES:=100}
+echo MAX_FILES: $MAX_FILES
+
+# default to 100 if not set on command line
+: ${MAX_ARGS:=$2}
+: ${MAX_ARGS:=100}
+echo MAX_ARGS: $MAX_ARGS
+
+# if full path to commands is not supplied the PATH is searched until the command is found
+# each miss will appear in the errors column in strace -c
+
+FILE_CMD=/usr/bin/file
+FIND_CMD=/usr/bin/find
+HEAD_CMD=/usr/bin/head
+XARGS_CMD=/usr/bin/xargs
+
+# use this command to find the number of executions of FILE_CMD
+# strace -f ./find-xargs.sh 2>&1 | grep 'execve("/usr/bin/file"'|wc
+
+#echo Listing files now...
+#$FIND_CMD . -type f -name file_\*  | $XARGS --max-chars=1048576 --max-args=$MAX_ARGS $FILE_CMD >/dev/null
+
+($FIND_CMD . -type f -name file_\* | $HEAD_CMD -$MAX_FILES )  | $XARGS_CMD --max-args=$MAX_ARGS $FILE_CMD >/dev/null 
+
+#################################
+
+ strace -f ./find-xargs.sh 150 30 2>&1 | grep 'execve("/usr/bin/file"'|wc -l
+ 5
+
+ strace -f ./find-xargs.sh 20 3 2>&1 | grep 'execve("/usr/bin/file"'|wc -l
+ 7
+
+ strace -f ./find-xargs.sh 1089 33 2>&1 | grep 'execve("/usr/bin/file"'|wc -l
+ 33
+
+
